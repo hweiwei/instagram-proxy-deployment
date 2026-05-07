@@ -549,6 +549,15 @@ NginxMainConfig
     # 创建日志目录
     mkdir -p /var/log/nginx
 
+    # 生成自签名 SSL 证书（必须在 nginx 测试之前）
+    log_info "生成自签名 SSL 证书..."
+    mkdir -p /etc/ssl/certs /etc/ssl/private
+    openssl req -x509 -nodes -newkey rsa:2048 \
+        -keyout /etc/ssl/private/server.key \
+        -out /etc/ssl/certs/server.crt \
+        -subj "/C=US/ST=California/L=San Francisco/O=Instagram Proxy/OU=Proxy/CN=$SERVER_IP" \
+        -days 3650 2>/dev/null
+
     # 测试配置
     nginx -t
 
