@@ -108,16 +108,20 @@ load_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
         log_error "配置文件不存在: $CONFIG_FILE"
         log_info "将使用默认配置"
-        SERVER_IP=$(curl -s ifconfig.me)
-        WS_PATH="/instagram-ws-$(generate_random)"
-        DOMAIN=""
-        USE_DOMAIN=false
     else
         source "$CONFIG_FILE"
     fi
 
-    # 设置默认值
-    SERVER_IP=${SERVER_IP:-$(curl -s ifconfig.me)}
+    # 设置默认值（支持多种 IP 获取方式）
+    if [[ -z "$SERVER_IP" ]]; then
+        SERVER_IP=$(curl -s --connect-timeout 5 ifconfig.me) || \
+        SERVER_IP=$(curl -s --connect-timeout 5 ip.sb) || \
+        SERVER_IP=$(curl -s --connect-timeout 5 icanhazip.com) || \
+        SERVER_IP=$(hostname -I | awk '{print $1}') || \
+        SERVER_IP="YOUR_SERVER_IP"
+        log_warn "无法获取公网 IP，当前使用: $SERVER_IP"
+    fi
+
     WS_PATH=${WS_PATH:-"/instagram-ws-$(generate_random)"}
 
     log_info "服务器IP: $SERVER_IP"
@@ -353,9 +357,24 @@ install_xray() {
     mkdir -p /etc/ssl/certs
     mkdir -p /etc/ssl/private
 
-    # 复制配置文件
+    # 复制配置文件（支持多种路径）
     if [[ -f "config/xray-config.json" ]]; then
+        cp config/xray-config.json /usr/local/etc/xray/config.json
         cp config/xray-config.json /etc/xray/config.json
+    else
+        # 如果模板不存在，创建一个默认配置
+        log_warn "配置文件模板不存在，创建默认配置..."
+        cat > /usr/local/etc/xray/config.json << 'XRAYEOF'
+{
+  "log": {"loglevel": "warning", "access": "/var/log/xray/access.log", "error": "/var/log/xray/error.log"},
+  "inbounds": [
+    {"tag": "vmess-ws-in", "port": 10089, "protocol": "vmess", "listen": "0.0.0.0", "settings": {"clients": []}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/instagram-ws"}}},
+    {"tag": "vless-tls-in", "port": 10086, "protocol": "vless", "listen": "0.0.0.0", "settings": {"clients": [], "decryption": "none"}, "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": {"certificates": [{"certificateFile": "/etc/ssl/certs/server.crt", "keyFile": "/etc/ssl/private/server.key"}], "fingerprint": "chrome"}}},
+    {"tag": "trojan-in", "port": 10087, "protocol": "trojan", "listen": "0.0.0.0", "settings": {"clients": []}, "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": {"certificates": [{"certificateFile": "/etc/ssl/certs/server.crt", "keyFile": "/etc/ssl/private/server.key"}], "fingerprint": "chrome"}}}
+  ],
+  "outbounds": [{"tag": "direct", "protocol": "freedom"}, {"tag": "blocked", "protocol": "blackhole"}]
+}
+XRAYEOF
     fi
 
     # 生成 SSL 证书（自签名，用于测试）
@@ -374,23 +393,22 @@ install_xray() {
     # 更新 Xray 配置中的用户
     if command -v jq &> /dev/null; then
         # 添加 VLESS 用户到 inbounds[1] (vless-tls-in)
-        # 注意：TCP+TLS 模式不需要 flow 参数，删除它
         jq --arg uuid "$USER_UUID_1" \
            --arg email "mobile@proxy.local" \
            '.inbounds[1].settings.clients += [{"id": $uuid, "email": $email}]' \
-           /etc/xray/config.json > /tmp/xray-config.json && mv /tmp/xray-config.json /etc/xray/config.json
+           /usr/local/etc/xray/config.json > /tmp/xray-config.json && mv /tmp/xray-config.json /usr/local/etc/xray/config.json
 
         # 添加 Trojan 用户到 inbounds[2] (trojan-in)
         jq --arg password "$USER_UUID_2" \
            --arg email "desktop@proxy.local" \
            '.inbounds[2].settings.clients += [{"password": $password, "email": $email}]' \
-           /etc/xray/config.json > /tmp/xray-config.json && mv /tmp/xray-config.json /etc/xray/config.json
+           /usr/local/etc/xray/config.json > /tmp/xray-config.json && mv /tmp/xray-config.json /usr/local/etc/xray/config.json
 
         # 添加 VMess 用户到 inbounds[0] (vmess-ws-in)
         jq --arg uuid "$USER_UUID_3" \
            --arg email "backup@proxy.local" \
            '.inbounds[0].settings.clients += [{"id": $uuid, "email": $email, "alterId": 0}]' \
-           /etc/xray/config.json > /tmp/xray-config.json && mv /tmp/xray-config.json /etc/xray/config.json
+           /usr/local/etc/xray/config.json > /tmp/xray-config.json && mv /tmp/xray-config.json /usr/local/etc/xray/config.json
     fi
 
     # 创建日志目录权限
@@ -781,6 +799,9 @@ EOF
 setup_subscription() {
     log_info "配置订阅服务..."
 
+    # 复制配置文件到 /etc/xray 以支持订阅服务
+    cp /usr/local/etc/xray/config.json /etc/xray/config.json 2>/dev/null || true
+
     cat > /var/www/html/api/v1/subscribe << 'EOF'
 #!/bin/bash
 # 简单的订阅服务（生产环境建议使用更安全的实现）
@@ -788,7 +809,7 @@ setup_subscription() {
 # 这里返回 base64 编码的配置
 # 实际使用时应该添加认证和限流
 
-cat /etc/xray/config.json | base64 -w0
+cat /usr/local/etc/xray/config.json | base64 -w0
 EOF
     chmod +x /var/www/html/api/v1/subscribe
 
