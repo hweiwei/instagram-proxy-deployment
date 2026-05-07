@@ -1,0 +1,304 @@
+{
+  "log": {
+    "loglevel": "warning",
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log"
+  },
+  "api": {
+    "tag": "api",
+    "services": [
+      "HandlerService",
+      "LoggerService",
+      "StatsService"
+    ]
+  },
+  "stats": {},
+  "policy": {
+    "levels": {
+      "0": {
+        "statsUserUplink": true,
+        "statsUserDownlink": true
+      }
+    },
+    "system": {
+      "statsInboundUplink": true,
+      "statsInboundDownlink": true,
+      "statsOutboundUplink": true,
+      "statsOutboundDownlink": true
+    }
+  },
+  "inbounds": [
+    {
+      "tag": "vmess-in",
+      "port": 10088,
+      "protocol": "vmess",
+      "listen": "127.0.0.1",
+      "settings": {
+        "clients": [],
+        "disableInsecure": false,
+        "default": {
+          "level": 0,
+          "email": "default@proxy.local"
+        }
+      },
+      "streamSettings": {
+        "network": "tcp"
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ]
+      }
+    },
+    {
+      "tag": "vmess-ws-in",
+      "port": 10089,
+      "protocol": "vmess",
+      "listen": "127.0.0.1",
+      "settings": {
+        "clients": []
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "acceptProxyProtocol": true,
+          "path": "/instagram-ws"
+        },
+        "security": "none",
+        "tlsSettings": {
+          "certFile": "/etc/ssl/certs/server.crt",
+          "keyFile": "/etc/ssl/private/server.key"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ]
+      }
+    },
+    {
+      "tag": "vless-tls-in",
+      "port": 10086,
+      "protocol": "vless",
+      "listen": "0.0.0.0",
+      "settings": {
+        "clients": [],
+        "decryption": "none",
+        "fallbacks": [
+          {
+            "dest": 10088
+          },
+          {
+            "path": "/instagram-ws",
+            "dest": 10089
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "/etc/ssl/certs/server.crt",
+              "keyFile": "/etc/ssl/private/server.key"
+            }
+          ],
+          "minVersion": "1.2",
+          "cipherSuites": "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA384:TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA384",
+          "fingerprint": "chrome",
+          "rejectUnknownSni": false
+        },
+        "sockopt": {
+          "mark": 255,
+          "tcpFastOpen": true
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ],
+        "metadataOnly": false
+      },
+      "socketopts": {
+        "mark": 255,
+        "tcpFastOpen": true,
+        "tproxy": "off"
+      }
+    },
+    {
+      "tag": "trojan-in",
+      "port": 10087,
+      "protocol": "trojan",
+      "listen": "0.0.0.0",
+      "settings": {
+        "clients": [],
+        "fallbacks": [
+          {
+            "dest": "127.0.0.1:10086"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "/etc/ssl/certs/server.crt",
+              "keyFile": "/etc/ssl/private/server.key"
+            }
+          ],
+          "fingerprint": "chrome",
+          "alpn": [
+            "h2",
+            "http/1.1"
+          ]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ]
+      }
+    },
+    {
+      "tag": "api",
+      "port": 10085,
+      "listen": "127.0.0.1",
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "127.0.0.1"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {
+        "domainStrategy": "UseIP"
+      },
+      "streamSettings": {
+        "sockopt": {
+          "mark": 255
+        }
+      }
+    },
+    {
+      "tag": "blocked",
+      "protocol": "blackhole",
+      "settings": {}
+    },
+    {
+      "tag": "instagram-optimized",
+      "protocol": "freedom",
+      "settings": {
+        "domainStrategy": "UseIP",
+        "redirect": "127.0.0.1:0"
+      },
+      "streamSettings": {
+        "sockopt": {
+          "mark": 255,
+          "tcpFastOpen": true,
+          "tproxy": "off"
+        }
+      }
+    }
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "domainMatcher": "linear",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": [
+          "api"
+        ],
+        "outboundTag": "api"
+      },
+      {
+        "type": "field",
+        "protocol": [
+          "bittorrent"
+        ],
+        "outboundTag": "blocked"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:instagram.com",
+          "domain:instagram.map.fastly.net",
+          "domain:instagram.c2sc.spotify.com",
+          "domain:cdninstagram.com",
+          "domain:graph.instagram.com",
+          "domain:igcdn.com",
+          "domain:fbcdn.net",
+          "domain:akamai.net"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "157.240.0.0/16",
+          "31.13.0.0/16",
+          "185.60.0.0/16"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "geosite:category-ads-all"
+        ],
+        "outboundTag": "blocked"
+      }
+    ]
+  },
+  "dns": {
+    "hosts": {
+      "domain:instagram.com": "157.240.27.174",
+      "domain:www.instagram.com": "157.240.27.174",
+      "domain:graph.instagram.com": "157.240.27.174",
+      "domain:cdninstagram.com": "157.240.27.174"
+    },
+    "servers": [
+      {
+        "address": "https://1.1.1.1/dns-query",
+        "domains": [
+          "domain:instagram.com",
+          "domain:facebook.com",
+          "domain:fbcdn.net"
+        ],
+        "port": 53
+      },
+      {
+        "address": "https://dns.google/dns-query",
+        "domains": [
+          "geosite:geolocation-!cn"
+        ],
+        "port": 53
+      },
+      {
+        "address": "172.16.0.1",
+        "port": 53,
+        "domains": [
+          "domain:local"
+        ]
+      },
+      "localhost"
+    ],
+    "disableCache": false,
+    "disableExpire": false
+  },
+  "fingerprint": "chrome"
+}
