@@ -373,16 +373,23 @@ install_xray() {
 
     # 更新 Xray 配置中的用户
     if command -v jq &> /dev/null; then
-        # 添加 VLESS 用户
+        # 添加 VLESS 用户到 inbounds[1] (vless-tls-in)
+        # 注意：TCP+TLS 模式不需要 flow 参数，删除它
         jq --arg uuid "$USER_UUID_1" \
            --arg email "mobile@proxy.local" \
-           '.inbounds[2].settings.clients += [{"id": $uuid, "email": $email, "flow": "xtls-rprx-vision"}]' \
+           '.inbounds[1].settings.clients += [{"id": $uuid, "email": $email}]' \
            /etc/xray/config.json > /tmp/xray-config.json && mv /tmp/xray-config.json /etc/xray/config.json
 
-        # 添加 Trojan 用户
+        # 添加 Trojan 用户到 inbounds[2] (trojan-in)
         jq --arg password "$USER_UUID_2" \
            --arg email "desktop@proxy.local" \
-           '.inbounds[3].settings.clients += [{"password": $password, "email": $email}]' \
+           '.inbounds[2].settings.clients += [{"password": $password, "email": $email}]' \
+           /etc/xray/config.json > /tmp/xray-config.json && mv /tmp/xray-config.json /etc/xray/config.json
+
+        # 添加 VMess 用户到 inbounds[0] (vmess-ws-in)
+        jq --arg uuid "$USER_UUID_3" \
+           --arg email "backup@proxy.local" \
+           '.inbounds[0].settings.clients += [{"id": $uuid, "email": $email, "alterId": 0}]' \
            /etc/xray/config.json > /tmp/xray-config.json && mv /tmp/xray-config.json /etc/xray/config.json
     fi
 
@@ -427,8 +434,7 @@ Instagram 代理账号信息
 端口: 10086
 UUID: $USER_UUID_1
 传输: TCP
-TLS: chrome
-Flow: xtls-rprx-vision
+TLS: 开启
 别名: Mobile-Device
 
 【账号 - 电脑设备】
@@ -442,10 +448,11 @@ SNI: $SERVER_IP
 【账号 - 备用账号】
 协议: VMess WebSocket
 地址: $SERVER_IP
-端口: 443 (通过 Nginx)
-路径: $WS_PATH
+端口: 10089
 UUID: $USER_UUID_3
-TLS: chrome
+传输: WebSocket
+路径: /instagram-ws
+TLS: 开启
 别名: Backup-Device
 
 ===============================================
@@ -744,19 +751,26 @@ setup_monitoring() {
 # Xray 健康检查脚本
 
 if systemctl is-active --quiet xray; then
-    if curl -s -f http://127.0.0.1:10085/stats > /dev/null 2>&1; then
-        echo "OK"
-        exit 0
+    # Xray 运行中，检查是否有错误日志
+    if grep -q "panic" /var/log/xray/error.log 2>/dev/null; then
+        echo "Xray error detected, restarting..."
+        systemctl restart xray
+        exit 1
     fi
+    echo "OK"
+    exit 0
 fi
 
-echo "FAILED"
+echo "Xray not running, starting..."
+systemctl start xray
 exit 1
 EOF
     chmod +x /usr/local/bin/health-check.sh
 
-    # 添加到 crontab
-    echo "*/5 * * * * root /usr/local/bin/health-check.sh || systemctl restart xray" >> /etc/crontab
+    # 添加到 crontab（改为 10 分钟一次，减少不必要的重启）
+    if ! grep -q "health-check.sh" /etc/crontab; then
+        echo "*/10 * * * * root /usr/local/bin/health-check.sh >> /var/log/health-check.log 2>&1" >> /etc/crontab
+    fi
 
     log_success "监控配置完成"
 }
